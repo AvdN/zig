@@ -2466,12 +2466,11 @@ fn resolveSymbolsInObject(self: *MachO, object_id: u16) !void {
             return error.UnhandledSymbolType;
         }
 
-        const n_strx = try self.makeString(sym_name);
         if (sym.sect()) {
             // Defined symbol regardless of scope lands in the locals symbol table.
             const local_sym_index = @intCast(u32, self.locals.items.len);
             try self.locals.append(self.base.allocator, .{
-                .n_strx = n_strx,
+                .n_strx = if (symbolIsTemp(sym, sym_name)) 0 else try self.makeString(sym_name),
                 .n_type = macho.N_SECT,
                 .n_sect = 0,
                 .n_desc = 0,
@@ -2484,6 +2483,7 @@ fn resolveSymbolsInObject(self: *MachO, object_id: u16) !void {
             // if we should save the symbol as a global, or potentially flag the error.
             if (!sym.ext()) continue;
 
+            const n_strx = try self.makeString(sym_name);
             const local = self.locals.items[local_sym_index];
             const resolv = self.symbol_resolver.getPtr(n_strx) orelse {
                 const global_sym_index = @intCast(u32, self.globals.items.len);
@@ -2554,6 +2554,7 @@ fn resolveSymbolsInObject(self: *MachO, object_id: u16) !void {
             };
         } else if (sym.tentative()) {
             // Symbol is a tentative definition.
+            const n_strx = try self.makeString(sym_name);
             const resolv = self.symbol_resolver.getPtr(n_strx) orelse {
                 const global_sym_index = @intCast(u32, self.globals.items.len);
                 try self.globals.append(self.base.allocator, .{
@@ -2610,6 +2611,7 @@ fn resolveSymbolsInObject(self: *MachO, object_id: u16) !void {
                 },
             }
         } else {
+            const n_strx = try self.makeString(sym_name);
             // Symbol is undefined.
             if (self.symbol_resolver.contains(n_strx)) continue;
 
@@ -4957,7 +4959,6 @@ fn writeSymbolTable(self: *MachO) !void {
 
     for (self.locals.items) |sym| {
         if (sym.n_strx == 0) continue;
-        if (symbolIsTemp(sym, self.getString(sym.n_strx))) continue;
         try locals.append(sym);
     }
 
