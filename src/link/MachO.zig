@@ -4969,6 +4969,7 @@ fn writeSymbolTable(self: *MachO) !void {
 
     for (self.locals.items) |sym| {
         if (sym.n_strx == 0) continue;
+        if (self.symbol_resolver.get(sym.n_strx)) |_| continue;
         try locals.append(sym);
     }
 
