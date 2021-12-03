@@ -911,40 +911,61 @@ pub fn flushModule(self: *MachO, comp: *Compilation) !void {
 
         try self.createTentativeDefAtoms();
         try self.parseObjectsIntoAtoms();
+
+        // log.warn("\n\nlocals:", .{});
+        // for (self.locals.items) |sym, id| {
+        //     log.warn("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
+        // }
+        // log.warn("\n\nglobals:", .{});
+        // for (self.globals.items) |sym, id| {
+        //     log.warn("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
+        // }
+        // {
+        //     log.warn("\n\nresolver:", .{});
+        //     var it = self.symbol_resolver.iterator();
+        //     while (it.next()) |entry| {
+        //         log.warn("  {s} => {}", .{ self.getString(entry.key_ptr.*), entry.value_ptr.* });
+        //     }
+        // }
+
+        if (use_stage1) {
+            try self.shrinkSections();
+        }
+
         try self.allocateGlobalSymbols();
 
-        log.debug("locals:", .{});
-        for (self.locals.items) |sym, id| {
-            log.debug("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
-        }
-        log.debug("globals:", .{});
-        for (self.globals.items) |sym, id| {
-            log.debug("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
-        }
-        log.debug("undefs:", .{});
-        for (self.undefs.items) |sym, id| {
-            log.debug("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
-        }
-        {
-            log.debug("resolver:", .{});
-            var it = self.symbol_resolver.iterator();
-            while (it.next()) |entry| {
-                log.debug("  {s} => {}", .{ self.getString(entry.key_ptr.*), entry.value_ptr.* });
-            }
-        }
+        // log.warn("\n\nlocals:", .{});
+        // for (self.locals.items) |sym, id| {
+        //     log.warn("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
+        // }
+        // log.warn("\n\nglobals:", .{});
+        // for (self.globals.items) |sym, id| {
+        //     log.warn("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
+        // }
+        // log.warn("undefs:", .{});
+        // for (self.undefs.items) |sym, id| {
+        //     log.warn("  {d}: {s}: {}", .{ id, self.getString(sym.n_strx), sym });
+        // }
+        // {
+        //     log.warn("\n\nresolver:", .{});
+        //     var it = self.symbol_resolver.iterator();
+        //     while (it.next()) |entry| {
+        //         log.warn("  {s} => {}", .{ self.getString(entry.key_ptr.*), entry.value_ptr.* });
+        //     }
+        // }
 
-        log.debug("GOT entries:", .{});
-        for (self.got_entries_map.keys()) |key| {
-            switch (key) {
-                .local => |sym_index| log.debug("  {} => {d}", .{ key, sym_index }),
-                .global => |n_strx| log.debug("  {} => {s}", .{ key, self.getString(n_strx) }),
-            }
-        }
+        // log.debug("GOT entries:", .{});
+        // for (self.got_entries_map.keys()) |key| {
+        //     switch (key) {
+        //         .local => |sym_index| log.debug("  {} => {d}", .{ key, sym_index }),
+        //         .global => |n_strx| log.debug("  {} => {s}", .{ key, self.getString(n_strx) }),
+        //     }
+        // }
 
-        log.debug("stubs:", .{});
-        for (self.stubs_map.keys()) |key| {
-            log.debug("  {} => {s}", .{ key, self.getString(key) });
-        }
+        // log.debug("stubs:", .{});
+        // for (self.stubs_map.keys()) |key| {
+        //     log.debug("  {} => {s}", .{ key, self.getString(key) });
+        // }
 
         try self.writeAtoms();
 
@@ -1945,7 +1966,9 @@ fn writeAtoms(self: *MachO) !void {
                     break :blk try math.cast(usize, size);
                 } else 0;
 
-                log.debug("  (adding atom {s} to buffer: {})", .{ self.getString(atom_sym.n_strx), atom_sym });
+                log.debug("  adding atom {s} to buffer", .{self.getString(atom_sym.n_strx)});
+                log.debug("    => addr: 0x{x}", .{atom_sym.n_value});
+                log.debug("    => alignment: 0x{x}", .{atom.alignment});
 
                 try atom.resolveRelocs(self);
                 try buffer.appendSlice(atom.code.items);
@@ -2928,6 +2951,16 @@ fn parseObjectsIntoAtoms(self: *MachO) !void {
             } else 0;
 
             sect.@"align" = math.max(sect.@"align", metadata.alignment);
+            if (!self.atoms.contains(match)) {
+                // Align the preallocated start address.
+                const alignment = try math.powi(u32, 2, sect.@"align");
+                const old_addr = sect.addr;
+                sect.addr = mem.alignForwardGeneric(u64, sect.addr, alignment);
+                sect.offset = @intCast(u32, mem.alignForwardGeneric(u64, sect.offset, alignment));
+                const diff = sect.addr - old_addr;
+                sect.size -= diff;
+            }
+
             const needed_size = @intCast(u32, metadata.size + sect_size);
             // TODO does release mode in stage2 need a file copy?
             const use_stage1 = build_options.is_stage1 and self.base.options.use_stage1;
@@ -2950,7 +2983,7 @@ fn parseObjectsIntoAtoms(self: *MachO) !void {
                 sym.n_value = base_vaddr;
                 sym.n_sect = n_sect;
 
-                log.debug("  {s}: start=0x{x}, end=0x{x}, size=0x{x}, alignment=0x{x}", .{
+                log.warn("  {s}: start=0x{x}, end=0x{x}, size=0x{x}, alignment=0x{x}", .{
                     self.getString(sym.n_strx),
                     base_vaddr,
                     base_vaddr + atom.size,
@@ -4638,6 +4671,144 @@ fn updateSectionOrdinals(self: *MachO) !void {
 
     self.section_ordinals.deinit(self.base.allocator);
     self.section_ordinals = ordinals;
+}
+
+/// When invoked, it will shrink the sections to remove any unused, preallocated space.
+/// It should be invoked after all objects were analysed.
+fn shrinkSections(self: *MachO) !void {
+    log.warn("\n\nshrinking segments and sections", .{});
+
+    var seg_ids = std.ArrayList(u16).init(self.base.allocator);
+    defer seg_ids.deinit();
+
+    for (&[_]?u16{
+        // self.text_segment_cmd_index,
+        self.data_const_segment_cmd_index,
+        self.data_segment_cmd_index,
+    }) |maybe_seg_id| {
+        const seg_id = maybe_seg_id orelse continue;
+        try seg_ids.append(seg_id);
+    }
+
+    var new_file_offsets = std.AutoHashMap(MatchingSection, u64).init(self.base.allocator);
+    defer new_file_offsets.deinit();
+
+    for (seg_ids.items) |seg_id| {
+        const seg = self.load_commands.items[seg_id].Segment;
+
+        try new_file_offsets.putNoClobber(.{
+            .seg = seg_id,
+            .sect = 0,
+        }, seg.sections.items[0].addr);
+
+        if (seg.sections.items.len == 1) continue;
+
+        var sect_id: u16 = 1;
+        while (sect_id < seg.sections.items.len) : (sect_id += 1) {
+            const prev_sect = seg.sections.items[sect_id - 1];
+            const curr_sect = seg.sections.items[sect_id];
+            const match = MatchingSection{
+                .seg = seg_id,
+                .sect = sect_id,
+            };
+
+            log.warn("{} => {s},{s}", .{ match, commands.segmentName(curr_sect), commands.sectionName(curr_sect) });
+
+            const prev_end = (new_file_offsets.get(.{
+                .seg = seg_id,
+                .sect = sect_id - 1,
+            }) orelse prev_sect.addr) + prev_sect.size;
+            const curr_start = curr_sect.addr;
+            const alignment = try math.powi(u32, 2, curr_sect.@"align");
+            const new_start_aligned = mem.alignForwardGeneric(u64, prev_end, alignment);
+
+            log.warn("  prev_end=0x{x}, curr_start=0x{x}, alignment=0x{x}, new_start_aligned=0x{x}, size=0x{x}", .{
+                prev_end,
+                curr_start,
+                alignment,
+                new_start_aligned,
+                curr_sect.size,
+            });
+
+            try new_file_offsets.putNoClobber(match, if (new_start_aligned < curr_start)
+                new_start_aligned
+            else
+                curr_start);
+        }
+    }
+
+    for (seg_ids.items) |seg_id, i| {
+        const curr_seg = &self.load_commands.items[seg_id].Segment;
+        const last_sect = curr_seg.sections.items[curr_seg.sections.items.len - 1];
+        const new_seg_size = mem.alignForwardGeneric(u64, new_file_offsets.get(.{
+            .seg = seg_id,
+            .sect = @intCast(u16, curr_seg.sections.items.len - 1),
+        }).? + last_sect.size - curr_seg.inner.vmaddr, self.page_size);
+        curr_seg.inner.filesize = new_seg_size;
+        curr_seg.inner.vmsize = new_seg_size;
+
+        const old_fileoff = if (i > 0) blk: {
+            const prev_seg = self.load_commands.items[seg_ids.items[i - 1]].Segment;
+            const old_fileoff = curr_seg.inner.vmaddr;
+            curr_seg.inner.fileoff = mem.alignForwardGeneric(
+                u64,
+                prev_seg.inner.fileoff + prev_seg.inner.filesize,
+                self.page_size,
+            );
+            curr_seg.inner.vmaddr = mem.alignForwardGeneric(
+                u64,
+                prev_seg.inner.vmaddr + prev_seg.inner.vmsize,
+                self.page_size,
+            );
+            break :blk old_fileoff;
+        } else curr_seg.inner.vmaddr;
+
+        log.warn("  (new {s} segment file offsets from 0x{x} to 0x{x} (in memory 0x{x} to 0x{x}))", .{
+            curr_seg.inner.segname,
+            curr_seg.inner.fileoff,
+            curr_seg.inner.fileoff + curr_seg.inner.filesize,
+            curr_seg.inner.vmaddr,
+            curr_seg.inner.vmaddr + curr_seg.inner.vmsize,
+        });
+
+        for (curr_seg.sections.items) |*sect, sect_id| {
+            const match = MatchingSection{
+                .seg = seg_id,
+                .sect = @intCast(u16, sect_id),
+            };
+            const old_sect_addr = sect.addr;
+            const new_offset = new_file_offsets.get(match).? - old_fileoff;
+            sect.addr = curr_seg.inner.vmaddr + new_offset;
+            sect.offset = @intCast(u32, curr_seg.inner.fileoff + new_offset);
+
+            log.debug("  (new {s},{s} file offsets from 0x{x} to 0x{x} (in memory 0x{x} to 0x{x}))", .{
+                commands.segmentName(sect.*),
+                commands.sectionName(sect.*),
+                sect.offset,
+                sect.offset + sect.size,
+                sect.addr,
+                sect.addr + sect.size,
+            });
+            log.debug("symbol realloc offset: 0x{x}", .{@intCast(i64, sect.addr) - @intCast(i64, old_sect_addr)});
+
+            try self.allocateLocalSymbols(match, @intCast(i64, sect.addr) - @intCast(i64, old_sect_addr));
+        }
+    }
+
+    {
+        const linkedit = &self.load_commands.items[self.linkedit_segment_cmd_index.?].Segment;
+        const prev_seg = self.load_commands.items[seg_ids.items[seg_ids.items.len - 1]].Segment;
+        linkedit.inner.fileoff = mem.alignForwardGeneric(
+            u64,
+            prev_seg.inner.fileoff + prev_seg.inner.filesize,
+            self.page_size,
+        );
+        linkedit.inner.vmaddr = mem.alignForwardGeneric(
+            u64,
+            prev_seg.inner.vmaddr + prev_seg.inner.vmsize,
+            self.page_size,
+        );
+    }
 }
 
 fn writeDyldInfoData(self: *MachO) !void {
