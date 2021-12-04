@@ -381,7 +381,7 @@ fn filterDice(dices: []macho.data_in_code_entry, start_addr: u64, end_addr: u64)
     return dices[start..end];
 }
 
-pub fn parseIntoAtoms(self: *Object, allocator: Allocator, macho_file: *MachO) !void {
+pub fn parseIntoAtoms(self: *Object, allocator: Allocator, macho_file: *MachO, prealloc: bool) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -430,7 +430,7 @@ pub fn parseIntoAtoms(self: *Object, allocator: Allocator, macho_file: *MachO) !
         });
 
         // Get matching segment/section in the final artifact.
-        const match = (try macho_file.getMatchingSection(sect)) orelse {
+        const match = (try macho_file.getMatchingSection(sect, prealloc)) orelse {
             log.debug("unhandled section", .{});
             continue;
         };
