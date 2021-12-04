@@ -4475,11 +4475,10 @@ fn allocateSegment(self: *MachO, index: u16, offset: u64) !void {
 
     // Allocate the sections according to their alignment at the beginning of the segment.
     var start: u64 = offset;
-    for (seg.sections.items) |*sect, sect_id| {
+    for (seg.sections.items) |*sect| {
         const alignment = try math.powi(u32, 2, sect.@"align");
         const start_aligned = mem.alignForwardGeneric(u64, start, alignment);
         const end = start_aligned + sect.size;
-        const file_offset = @intCast(u32, seg.inner.fileoff + start_aligned);
         sect.offset = @intCast(u32, seg.inner.fileoff + start_aligned);
         sect.addr = seg.inner.vmaddr + start_aligned;
         start = end;
