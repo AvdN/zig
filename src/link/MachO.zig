@@ -955,6 +955,18 @@ pub fn flushModule(self: *MachO, comp: *Compilation) !void {
             log.debug("  {} => {s}", .{ key, self.getString(key) });
         }
 
+        for (self.section_ordinals.keys()) |match, i| {
+            const seg = self.load_commands.items[match.seg].Segment;
+            const sect = seg.sections.items[match.sect];
+            log.debug("{d}: {d},{d} == {s},{s}", .{
+                i + 1,
+                match.seg,
+                match.sect,
+                commands.segmentName(sect),
+                commands.sectionName(sect),
+            });
+        }
+
         try self.writeAtoms();
 
         if (self.bss_section_index) |idx| {
@@ -1949,9 +1961,9 @@ fn allocLocalSymbols(self: *MachO) !void {
             atom = prev;
         }
 
+        const n_sect = @intCast(u8, self.section_ordinals.getIndex(match).? + 1);
         const seg = self.load_commands.items[match.seg].Segment;
         const sect = seg.sections.items[match.sect];
-        const n_sect = @intCast(u8, self.section_ordinals.getIndex(match).? + 1);
         var base_vaddr = sect.addr;
 
         while (true) {
@@ -2075,6 +2087,7 @@ fn writeAtoms(self: *MachO) !void {
             if (atom.next) |next| {
                 atom = next;
             } else {
+                assert(buffer.items.len == sect.size);
                 if (file_offset) |off| {
                     try self.base.file.?.pwriteAll(buffer.items, off);
                 }
@@ -2272,6 +2285,7 @@ fn createStubHelperPreambleAtom(self: *MachO, prealloc: bool) !void {
         .seg = self.text_segment_cmd_index.?,
         .sect = self.stub_helper_section_index.?,
     };
+
     if (prealloc) {
         const alignment_pow_2 = try math.powi(u32, 2, atom.alignment);
         const vaddr = try self.allocateAtom(atom, atom.size, alignment_pow_2, match);
@@ -2982,9 +2996,16 @@ fn parseObjectsIntoAtoms(self: *MachO, prealloc: bool) !void {
         var it = object.end_atoms.iterator();
         while (it.next()) |entry| {
             const match = entry.key_ptr.*;
-            const last_atom = entry.value_ptr.*;
-            var atom = last_atom;
+            var atom = entry.value_ptr.*;
 
+            while (atom.prev) |prev| {
+                atom = prev;
+            }
+
+            const first_atom = atom;
+
+            const seg = self.load_commands.items[match.seg].Segment;
+            const sect = seg.sections.items[match.sect];
             const metadata = try section_metadata.getOrPut(match);
             if (!metadata.found_existing) {
                 metadata.value_ptr.* = .{
@@ -2993,9 +3014,13 @@ fn parseObjectsIntoAtoms(self: *MachO, prealloc: bool) !void {
                 };
             }
 
+            log.debug("{s},{s}", .{ commands.segmentName(sect), commands.sectionName(sect) });
+
             while (true) {
                 const alignment = try math.powi(u32, 2, atom.alignment);
-                metadata.value_ptr.size += mem.alignForwardGeneric(u64, atom.size, alignment);
+                const curr_size = metadata.value_ptr.size;
+                const curr_size_aligned = mem.alignForwardGeneric(u64, curr_size, alignment);
+                metadata.value_ptr.size = curr_size_aligned + atom.size;
                 metadata.value_ptr.alignment = math.max(metadata.value_ptr.alignment, atom.alignment);
 
                 const sym = self.locals.items[atom.local_sym_index];
@@ -3006,20 +3031,20 @@ fn parseObjectsIntoAtoms(self: *MachO, prealloc: bool) !void {
                     atom.alignment,
                 });
 
-                if (atom.prev) |prev| {
-                    atom = prev;
+                if (atom.next) |next| {
+                    atom = next;
                 } else break;
             }
 
             if (parsed_atoms.getPtr(match)) |last| {
-                last.*.next = atom;
-                atom.prev = last.*;
-                last.* = atom;
+                last.*.next = first_atom;
+                first_atom.prev = last.*;
+                last.* = first_atom;
             }
-            _ = try parsed_atoms.put(match, last_atom);
+            _ = try parsed_atoms.put(match, atom);
 
             if (!first_atoms.contains(match)) {
-                try first_atoms.putNoClobber(match, atom);
+                try first_atoms.putNoClobber(match, first_atom);
             }
         }
 
@@ -3049,10 +3074,8 @@ fn parseObjectsIntoAtoms(self: *MachO, prealloc: bool) !void {
 
         if (prealloc) {
             try self.growSection(match, needed_size);
-            sect.size = needed_size;
-        } else {
-            sect.size += needed_size;
         }
+        sect.size = needed_size;
     }
 
     for (&[_]?u16{
@@ -4828,7 +4851,8 @@ fn allocateAtom(self: *MachO, atom: *Atom, new_atom_size: u64, alignment: u64, m
 fn addAtomAndBumpSectionSize(self: *MachO, atom: *Atom, match: MatchingSection) !void {
     const seg = &self.load_commands.items[match.seg].Segment;
     const sect = &seg.sections.items[match.sect];
-    sect.size += atom.size;
+    const alignment = try math.powi(u32, 2, atom.alignment);
+    sect.size = mem.alignForwardGeneric(u64, sect.size, alignment) + atom.size;
 
     if (self.atoms.getPtr(match)) |last| {
         last.*.next = atom;
