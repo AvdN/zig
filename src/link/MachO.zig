@@ -2089,6 +2089,7 @@ fn writeAtoms(self: *MachO) !void {
             } else {
                 assert(buffer.items.len == sect.size);
                 if (file_offset) |off| {
+                    log.debug("  (writing at file offset 0x{x})", .{off});
                     try self.base.file.?.pwriteAll(buffer.items, off);
                 }
                 file_offset = null;
@@ -4477,29 +4478,11 @@ fn allocateSegment(self: *MachO, index: u16, offset: u64) !void {
     for (seg.sections.items) |*sect, sect_id| {
         const alignment = try math.powi(u32, 2, sect.@"align");
         const start_aligned = mem.alignForwardGeneric(u64, start, alignment);
-        const end_aligned = mem.alignForwardGeneric(u64, start_aligned + sect.size, alignment);
+        const end = start_aligned + sect.size;
         const file_offset = @intCast(u32, seg.inner.fileoff + start_aligned);
-
-        blk: {
-            if (index == self.data_segment_cmd_index.?) {
-                if (self.bss_section_index) |idx| {
-                    if (sect_id == idx) {
-                        self.bss_file_offset = file_offset;
-                        break :blk;
-                    }
-                }
-                if (self.tlv_bss_section_index) |idx| {
-                    if (sect_id == idx) {
-                        self.tlv_bss_file_offset = file_offset;
-                        break :blk;
-                    }
-                }
-            }
-            sect.offset = @intCast(u32, seg.inner.fileoff + start_aligned);
-        }
-
+        sect.offset = @intCast(u32, seg.inner.fileoff + start_aligned);
         sect.addr = seg.inner.vmaddr + start_aligned;
-        start = end_aligned;
+        start = end;
     }
 
     const seg_size_aligned = mem.alignForwardGeneric(u64, start, self.page_size);
