@@ -1260,7 +1260,7 @@ test "expectEqual demo" {
 
     // The first argument to `expectEqual` is the known, expected, result.
     // The second argument is the result of some expression.
-    // The actual's type is casted to the type of expected.
+    // The actual's type is cast to the type of expected.
     try std.testing.expectEqual(expected, actual);
 }
 
